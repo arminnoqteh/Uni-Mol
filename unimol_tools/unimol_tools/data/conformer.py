@@ -22,7 +22,7 @@ from numba import njit
 import multiprocessing
 
 # set context for multiprocessing
-multiprocessing.set_start_method("spawn", force=True)
+multiprocessing.set_start_method("forkserver", force=True)
 
 from ..utils import logger
 from ..config import MODEL_CONFIG
