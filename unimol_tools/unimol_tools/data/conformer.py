@@ -139,10 +139,15 @@ class ConformerGen(object):
         return inputs
 
     def transform(self, smiles_list):
-        pool = Pool()
-        logger.info("Start generating conformers...")
-        inputs = [item for item in tqdm(pool.imap(self.single_process, smiles_list))]
-        pool.close()
+        # pool = Pool()
+        # logger.info("Start generating conformers...")
+        # inputs = [item for item in tqdm(pool.imap(self.single_process, smiles_list))]
+        # pool.close()
+        with Pool(processes=4) as pool:
+            logger.info("Start generating conformers...")
+            inputs = []
+            for item in tqdm(pool.imap(self.single_process, smiles_list)):
+                inputs.append(item)
         failed_cnt = np.mean([(item["src_coord"] == 0.0).all() for item in inputs])
         logger.info(
             "Succeeded in generating conformers for {:.2f}% of molecules.".format(
@@ -364,7 +369,7 @@ class UniMolV2Feature(object):
 
     def transform(self, smiles_list):
 
-        with Pool(processes=2) as pool:
+        with Pool(processes=4) as pool:
             logger.info("Start generating conformers...")
             inputs = []
             for item in tqdm(pool.imap(self.single_process, smiles_list)):
