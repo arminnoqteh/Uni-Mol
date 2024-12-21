@@ -21,6 +21,9 @@ import torch
 from numba import njit
 import multiprocessing
 
+# set context for multiprocessing
+multiprocessing.set_start_method("fork", force=True)
+
 from ..utils import logger
 from ..config import MODEL_CONFIG
 from ..weights import weight_download, WEIGHT_DIR
@@ -370,7 +373,7 @@ class UniMolV2Feature(object):
 
     def transform(self, smiles_list):
 
-        with Pool(processes=4, context=multiprocessing.get_context("spawn")) as pool:
+        with Pool(processes=4) as pool:
             logger.info("Start generating conformers...")
             inputs = []
             for item in tqdm(pool.imap(self.single_process, smiles_list)):
