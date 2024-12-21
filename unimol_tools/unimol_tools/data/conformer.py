@@ -19,6 +19,7 @@ from multiprocessing import Pool
 from tqdm import tqdm
 import torch
 from numba import njit
+import multiprocessing
 
 from ..utils import logger
 from ..config import MODEL_CONFIG
@@ -369,16 +370,15 @@ class UniMolV2Feature(object):
 
     def transform(self, smiles_list):
 
-        # with Pool(processes=4) as pool:
-        #     logger.info("Start generating conformers...")
-        #     inputs = []
-        #     for item in tqdm(pool.imap(self.single_process, smiles_list)):
-        #         inputs.append(item)
+        with Pool(processes=4, context=multiprocessing.get_context("spawn")) as pool:
+            logger.info("Start generating conformers...")
+            inputs = []
+            for item in tqdm(pool.imap(self.single_process, smiles_list)):
+                inputs.append(item)
 
-        logger.info("Start generating conformers without multiprocessing...")
-        inputs = []
-        for item in tqdm([self.single_process(smiles) for smiles in smiles_list]):
-            inputs.append(item)
+        # inputs = []
+        # for item in tqdm([self.single_process(smiles) for smiles in smiles_list]):
+        #     inputs.append(item)
         failed_cnt = np.mean([(item["src_coord"] == 0.0).all() for item in inputs])
         logger.info(
             "Succeeded in generating conformers for {:.2f}% of molecules.".format(
