@@ -11,13 +11,16 @@ from rdkit.Chem import AllChem
 from rdkit import RDLogger
 import warnings
 from scipy.spatial import distance_matrix
-RDLogger.DisableLog('rdApp.*') 
-warnings.filterwarnings(action='ignore')
+
+RDLogger.DisableLog("rdApp.*")
+warnings.filterwarnings(action="ignore")
 from .dictionary import Dictionary
 from multiprocessing import Pool
 from tqdm import tqdm
 import torch
 from numba import njit
+
+# import multiprocessing
 
 from ..utils import logger
 from ..config import MODEL_CONFIG
@@ -55,10 +58,12 @@ allowable_features = {
     "possible_is_conjugated_list": [False, True],
 }
 
+
 class ConformerGen(object):
-    '''
+    """
     This class designed to generate conformers for molecules represented as SMILES strings using provided parameters and configurations. The `transform` method uses multiprocessing to speed up the conformer generation process.
-    '''
+    """
+
     def __init__(self, **params):
         """
         Initializes the neural network model based on the provided model name and parameters.
@@ -79,18 +84,18 @@ class ConformerGen(object):
                        These can include the random seed, maximum number of atoms, data type,
                        generation method, generation mode, and whether to remove hydrogens.
         """
-        self.seed = params.get('seed', 42)
-        self.max_atoms = params.get('max_atoms', 256)
-        self.data_type = params.get('data_type', 'molecule')
-        self.method = params.get('method', 'rdkit_random')
-        self.mode = params.get('mode', 'fast')
-        self.remove_hs = params.get('remove_hs', False)
-        if self.data_type == 'molecule':
-            name = "no_h" if self.remove_hs else "all_h" 
-            name = self.data_type + '_' + name
-            self.dict_name = MODEL_CONFIG['dict'][name]
+        self.seed = params.get("seed", 42)
+        self.max_atoms = params.get("max_atoms", 256)
+        self.data_type = params.get("data_type", "molecule")
+        self.method = params.get("method", "rdkit_random")
+        self.mode = params.get("mode", "fast")
+        self.remove_hs = params.get("remove_hs", False)
+        if self.data_type == "molecule":
+            name = "no_h" if self.remove_hs else "all_h"
+            name = self.data_type + "_" + name
+            self.dict_name = MODEL_CONFIG["dict"][name]
         else:
-            self.dict_name = MODEL_CONFIG['dict'][self.data_type]
+            self.dict_name = MODEL_CONFIG["dict"][self.data_type]
         if not os.path.exists(os.path.join(WEIGHT_DIR, self.dict_name)):
             weight_download(self.dict_name, WEIGHT_DIR)
         self.dictionary = Dictionary.load(os.path.join(WEIGHT_DIR, self.dict_name))
@@ -104,33 +109,66 @@ class ConformerGen(object):
         :return: A unimolecular data representation (dictionary) of the molecule.
         :raises ValueError: If the conformer generation method is unrecognized.
         """
-        if self.method == 'rdkit_random':
-            atoms, coordinates = inner_smi2coords(smiles, seed=self.seed, mode=self.mode, remove_hs=self.remove_hs)
-            return coords2unimol(atoms, coordinates, self.dictionary, self.max_atoms, remove_hs=self.remove_hs)
+        if self.method == "rdkit_random":
+            atoms, coordinates = inner_smi2coords(
+                smiles, seed=self.seed, mode=self.mode, remove_hs=self.remove_hs
+            )
+            return coords2unimol(
+                atoms,
+                coordinates,
+                self.dictionary,
+                self.max_atoms,
+                remove_hs=self.remove_hs,
+            )
         else:
-            raise ValueError('Unknown conformer generation method: {}'.format(self.method))
-        
+            raise ValueError(
+                "Unknown conformer generation method: {}".format(self.method)
+            )
+
     def transform_raw(self, atoms_list, coordinates_list):
 
         inputs = []
         for atoms, coordinates in zip(atoms_list, coordinates_list):
-            inputs.append(coords2unimol(atoms, coordinates, self.dictionary, self.max_atoms, remove_hs=self.remove_hs))
+            inputs.append(
+                coords2unimol(
+                    atoms,
+                    coordinates,
+                    self.dictionary,
+                    self.max_atoms,
+                    remove_hs=self.remove_hs,
+                )
+            )
         return inputs
 
     def transform(self, smiles_list):
-        pool = Pool()
-        logger.info('Start generating conformers...')
-        inputs = [item for item in tqdm(pool.imap(self.single_process, smiles_list))]
-        pool.close()
-        failed_cnt = np.mean([(item['src_coord']==0.0).all() for item in inputs])
-        logger.info('Succeeded in generating conformers for {:.2f}% of molecules.'.format((1-failed_cnt)*100))
-        failed_3d_cnt = np.mean([(item['src_coord'][:,2]==0.0).all() for item in inputs])
-        logger.info('Succeeded in generating 3d conformers for {:.2f}% of molecules.'.format((1-failed_3d_cnt)*100))
+        # pool = Pool()
+        # logger.info("Start generating conformers...")
+        # inputs = [item for item in tqdm(pool.imap(self.single_process, smiles_list))]
+        # pool.close()
+        with Pool(processes=4) as pool:
+            logger.info("Start generating conformers...")
+            inputs = []
+            for item in tqdm(pool.imap(self.single_process, smiles_list)):
+                inputs.append(item)
+        failed_cnt = np.mean([(item["src_coord"] == 0.0).all() for item in inputs])
+        logger.info(
+            "Succeeded in generating conformers for {:.2f}% of molecules.".format(
+                (1 - failed_cnt) * 100
+            )
+        )
+        failed_3d_cnt = np.mean(
+            [(item["src_coord"][:, 2] == 0.0).all() for item in inputs]
+        )
+        logger.info(
+            "Succeeded in generating 3d conformers for {:.2f}% of molecules.".format(
+                (1 - failed_3d_cnt) * 100
+            )
+        )
         return inputs
 
 
-def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False):
-    '''
+def inner_smi2coords(smi, seed=42, mode="fast", remove_hs=True, return_mol=False):
+    """
     This function is responsible for converting a SMILES (Simplified Molecular Input Line Entry System) string into 3D coordinates for each atom in the molecule. It also allows for the generation of 2D coordinates if 3D conformation generation fails, and optionally removes hydrogen atoms and their coordinates from the resulting data.
 
     :param smi: (str) The SMILES representation of the molecule.
@@ -140,11 +178,11 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
 
     :return: A tuple containing the list of atom symbols and their corresponding 3D coordinates.
     :raises AssertionError: If no atoms are present in the molecule or if the coordinates do not align with the atom count.
-    '''
+    """
     mol = Chem.MolFromSmiles(smi)
     mol = AllChem.AddHs(mol)
     atoms = [atom.GetSymbol() for atom in mol.GetAtoms()]
-    assert len(atoms)>0, 'No atoms in molecule: {}'.format(smi)
+    assert len(atoms) > 0, "No atoms in molecule: {}".format(smi)
     try:
         # will random generate conformer with seed equal to -1. else fixed random seed.
         res = AllChem.EmbedMolecule(mol, randomSeed=seed)
@@ -156,7 +194,7 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
             except:
                 coordinates = mol.GetConformer().GetPositions().astype(np.float32)
         ## for fast test... ignore this ###
-        elif res == -1 and mode == 'heavy':
+        elif res == -1 and mode == "heavy":
             AllChem.EmbedMolecule(mol, maxAttempts=5000, randomSeed=seed)
             try:
                 # some conformer can not use MMFF optimize
@@ -172,48 +210,58 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
             coordinates = coordinates_2d
     except:
         print("Failed to generate conformer, replace with zeros.")
-        coordinates = np.zeros((len(atoms),3))
+        coordinates = np.zeros((len(atoms), 3))
 
     if return_mol:
-        return mol # for unimolv2
-    
-    assert len(atoms) == len(coordinates), "coordinates shape is not align with {}".format(smi)
+        return mol  # for unimolv2
+
+    assert len(atoms) == len(
+        coordinates
+    ), "coordinates shape is not align with {}".format(smi)
     if remove_hs:
-        idx = [i for i, atom in enumerate(atoms) if atom != 'H']
-        atoms_no_h = [atom for atom in atoms if atom != 'H']
+        idx = [i for i, atom in enumerate(atoms) if atom != "H"]
+        atoms_no_h = [atom for atom in atoms if atom != "H"]
         coordinates_no_h = coordinates[idx]
-        assert len(atoms_no_h) == len(coordinates_no_h), "coordinates shape is not align with {}".format(smi)
+        assert len(atoms_no_h) == len(
+            coordinates_no_h
+        ), "coordinates shape is not align with {}".format(smi)
         return atoms_no_h, coordinates_no_h
     else:
         return atoms, coordinates
 
+
 def inner_coords(atoms, coordinates, remove_hs=True):
     """
     Processes a list of atoms and their corresponding coordinates to remove hydrogen atoms if specified.
-    This function takes a list of atom symbols and their corresponding coordinates and optionally removes hydrogen atoms from the output. It includes assertions to ensure the integrity of the data and uses numpy for efficient processing of the coordinates. 
+    This function takes a list of atom symbols and their corresponding coordinates and optionally removes hydrogen atoms from the output. It includes assertions to ensure the integrity of the data and uses numpy for efficient processing of the coordinates.
 
     :param atoms: (list) A list of atom symbols (e.g., ['C', 'H', 'O']).
     :param coordinates: (list of tuples or list of lists) Coordinates corresponding to each atom in the `atoms` list.
     :param remove_hs: (bool, optional) A flag to indicate whether hydrogen atoms should be removed from the output.
                       Defaults to True.
-    
+
     :return: A tuple containing two elements; the filtered list of atom symbols and their corresponding coordinates.
              If `remove_hs` is False, the original lists are returned.
-    
+
     :raises AssertionError: If the length of `atoms` list does not match the length of `coordinates` list.
     """
     assert len(atoms) == len(coordinates), "coordinates shape is not align atoms"
     coordinates = np.array(coordinates).astype(np.float32)
     if remove_hs:
-        idx = [i for i, atom in enumerate(atoms) if atom != 'H']
-        atoms_no_h = [atom for atom in atoms if atom != 'H']
+        idx = [i for i, atom in enumerate(atoms) if atom != "H"]
+        atoms_no_h = [atom for atom in atoms if atom != "H"]
         coordinates_no_h = coordinates[idx]
-        assert len(atoms_no_h) == len(coordinates_no_h), "coordinates shape is not align with atoms"
+        assert len(atoms_no_h) == len(
+            coordinates_no_h
+        ), "coordinates shape is not align with atoms"
         return atoms_no_h, coordinates_no_h
     else:
         return atoms, coordinates
 
-def coords2unimol(atoms, coordinates, dictionary, max_atoms=256, remove_hs=True, **params):
+
+def coords2unimol(
+    atoms, coordinates, dictionary, max_atoms=256, remove_hs=True, **params
+):
     """
     Converts atom symbols and coordinates into a unified molecular representation.
 
@@ -235,27 +283,35 @@ def coords2unimol(atoms, coordinates, dictionary, max_atoms=256, remove_hs=True,
         atoms = atoms[idx]
         coordinates = coordinates[idx]
     # tokens padding
-    src_tokens = np.array([dictionary.bos()] + [dictionary.index(atom) for atom in atoms] + [dictionary.eos()])
+    src_tokens = np.array(
+        [dictionary.bos()]
+        + [dictionary.index(atom) for atom in atoms]
+        + [dictionary.eos()]
+    )
     src_distance = np.zeros((len(src_tokens), len(src_tokens)))
     # coordinates normalize & padding
     src_coord = coordinates - coordinates.mean(axis=0)
-    src_coord = np.concatenate([np.zeros((1,3)), src_coord, np.zeros((1,3))], axis=0)
+    src_coord = np.concatenate([np.zeros((1, 3)), src_coord, np.zeros((1, 3))], axis=0)
     # distance matrix
     src_distance = distance_matrix(src_coord, src_coord)
     # edge type
-    src_edge_type = src_tokens.reshape(-1, 1) * len(dictionary) + src_tokens.reshape(1, -1)
+    src_edge_type = src_tokens.reshape(-1, 1) * len(dictionary) + src_tokens.reshape(
+        1, -1
+    )
 
     return {
-            'src_tokens': src_tokens.astype(int), 
-            'src_distance': src_distance.astype(np.float32), 
-            'src_coord': src_coord.astype(np.float32), 
-            'src_edge_type': src_edge_type.astype(int),
-            }
+        "src_tokens": src_tokens.astype(int),
+        "src_distance": src_distance.astype(np.float32),
+        "src_coord": src_coord.astype(np.float32),
+        "src_edge_type": src_edge_type.astype(int),
+    }
+
 
 class UniMolV2Feature(object):
-    '''
+    """
     This class is responsible for generating features for molecules represented as SMILES strings. It uses the ConformerGen class to generate conformers for the molecules and converts the resulting atom symbols and coordinates into a unified molecular representation.
-    '''
+    """
+
     def __init__(self, **params):
         """
         Initializes the neural network model based on the provided model name and parameters.
@@ -276,12 +332,12 @@ class UniMolV2Feature(object):
                        These can include the random seed, maximum number of atoms, data type,
                        generation method, generation mode, and whether to remove hydrogens.
         """
-        self.seed = params.get('seed', 42)
-        self.max_atoms = params.get('max_atoms', 128)
-        self.data_type = params.get('data_type', 'molecule')
-        self.method = params.get('method', 'rdkit_random')
-        self.mode = params.get('mode', 'fast')
-        self.remove_hs = params.get('remove_hs', True)
+        self.seed = params.get("seed", 42)
+        self.max_atoms = params.get("max_atoms", 128)
+        self.data_type = params.get("data_type", "molecule")
+        self.method = params.get("method", "rdkit_random")
+        self.mode = params.get("mode", "fast")
+        self.remove_hs = params.get("remove_hs", True)
 
     def single_process(self, smiles):
         """
@@ -291,43 +347,56 @@ class UniMolV2Feature(object):
         :return: A unimolecular data representation (dictionary) of the molecule.
         :raises ValueError: If the conformer generation method is unrecognized.
         """
-        torch.set_num_threads(1)
-        if self.method == 'rdkit_random':
-            mol = inner_smi2coords(smiles, seed=self.seed, mode=self.mode, remove_hs=self.remove_hs, return_mol=True)
+        if self.method == "rdkit_random":
+            mol = inner_smi2coords(
+                smiles,
+                seed=self.seed,
+                mode=self.mode,
+                remove_hs=self.remove_hs,
+                return_mol=True,
+            )
             return mol2unimolv2(mol, self.max_atoms, remove_hs=self.remove_hs)
         else:
-            raise ValueError('Unknown conformer generation method: {}'.format(self.method))
-        
+            raise ValueError(
+                "Unknown conformer generation method: {}".format(self.method)
+            )
+
     def transform_raw(self, atoms_list, coordinates_list):
-            
-            inputs = []
-            for atoms, coordinates in zip(atoms_list, coordinates_list):
-                mol = create_mol_from_atoms_and_coords(atoms, coordinates)
-                inputs.append(mol2unimolv2(mol, self.max_atoms, remove_hs=self.remove_hs))
-            return inputs
-    
-    def transform(self, smiles_list):
-        torch.set_num_threads(1)
-        pool = Pool(processes=min(8, os.cpu_count()))
-        logger.info('Start generating conformers...')
-        inputs = [item for item in tqdm(pool.imap(self.single_process, smiles_list))]
-        pool.close()
 
-        failed_conf = [(item['src_coord']==0.0).all() for item in inputs]
-        logger.info('Succeeded in generating conformers for {:.2f}% of molecules.'.format((1-np.mean(failed_conf))*100))
-        failed_conf_indices = [index for index, value in enumerate(failed_conf) if value]
-        if len(failed_conf_indices) > 0:
-            logger.info('Failed conformers indices: {}'.format(failed_conf_indices))
-            logger.debug('Failed conformers SMILES: {}'.format([smiles_list[index] for index in failed_conf_indices]))
-
-        failed_conf_3d = [(item['src_coord'][:,2]==0.0).all() for item in inputs]
-        logger.info('Succeeded in generating 3d conformers for {:.2f}% of molecules.'.format((1-np.mean(failed_conf_3d))*100))
-        failed_conf_3d_indices = [index for index, value in enumerate(failed_conf_3d) if value]
-        if len(failed_conf_3d_indices) > 0:
-            logger.info('Failed 3d conformers indices: {}'.format(failed_conf_3d_indices))
-            logger.debug('Failed 3d conformers SMILES: {}'.format([smiles_list[index] for index in failed_conf_3d_indices]))
-
+        inputs = []
+        for atoms, coordinates in zip(atoms_list, coordinates_list):
+            mol = create_mol_from_atoms_and_coords(atoms, coordinates)
+            inputs.append(mol2unimolv2(mol, self.max_atoms, remove_hs=self.remove_hs))
         return inputs
+
+    def transform(self, smiles_list):
+
+        with Pool(processes=4) as pool:
+            logger.info("Start generating conformers...")
+            inputs = []
+            for item in tqdm(pool.imap(self.single_process, smiles_list)):
+                inputs.append(item)
+
+        # inputs = []
+        # for item in tqdm([self.single_process(smiles) for smiles in smiles_list]):
+        #     inputs.append(item)
+
+        # failed_cnt = np.mean([(item["src_coord"] == 0.0).all() for item in inputs])
+        # logger.info(
+        #     "Succeeded in generating conformers for {:.2f}% of molecules.".format(
+        #         (1 - failed_cnt) * 100
+        #     )
+        # )
+        # failed_3d_cnt = np.mean(
+        #     [(item["src_coord"][:, 2] == 0.0).all() for item in inputs]
+        # )
+        # logger.info(
+        #     "Succeeded in generating 3d conformers for {:.2f}% of molecules.".format(
+        #         (1 - failed_3d_cnt) * 100
+        #     )
+        # )
+        return inputs
+
 
 def create_mol_from_atoms_and_coords(atoms, coordinates):
     """
@@ -352,6 +421,7 @@ def create_mol_from_atoms_and_coords(atoms, coordinates):
     Chem.SanitizeMol(mol)
     return mol
 
+
 def mol2unimolv2(mol, max_atoms=128, remove_hs=True, **params):
     """
     Converts atom symbols and coordinates into a unified molecular representation.
@@ -363,10 +433,10 @@ def mol2unimolv2(mol, max_atoms=128, remove_hs=True, **params):
 
     :return: A batched data containing the molecular representation.
     """
-    
+
     mol = AllChem.AddHs(mol, addCoords=True)
     atoms_h = np.array([atom.GetSymbol() for atom in mol.GetAtoms()])
-    nH_idx = [i for i, atom in enumerate(atoms_h) if atom != 'H']
+    nH_idx = [i for i, atom in enumerate(atoms_h) if atom != "H"]
     atoms = atoms_h[nH_idx]
     coordinates_h = mol.GetConformer().GetPositions().astype(np.float32)
     coordinates = coordinates_h[nH_idx]
@@ -377,15 +447,18 @@ def mol2unimolv2(mol, max_atoms=128, remove_hs=True, **params):
         atoms = atoms[idx]
         coordinates = coordinates[idx]
     # tokens padding
-    src_tokens = torch.tensor([AllChem.GetPeriodicTable().GetAtomicNumber(item) for item in atoms])
-    src_coord = torch.tensor(coordinates)
+    src_tokens = torch.tensor(
+        [AllChem.GetPeriodicTable().GetAtomicNumber(item) for item in atoms]
+    )
+    src_pos = torch.tensor(coordinates)
     # change AllChem.RemoveHs to AllChem.RemoveAllHs
     mol = AllChem.RemoveAllHs(mol)
     node_attr, edge_index, edge_attr = get_graph(mol)
     feat = get_graph_features(edge_attr, edge_index, node_attr, drop_feat=0)
-    feat['src_tokens'] = src_tokens
-    feat['src_coord'] = src_coord
+    feat["src_tokens"] = src_tokens
+    feat["src_pos"] = src_pos
     return feat
+
 
 def safe_index(l, e):
     """
@@ -395,6 +468,7 @@ def safe_index(l, e):
         return l.index(e)
     except:
         return len(l) - 1
+
 
 def atom_to_feature_vector(atom):
     """
@@ -474,6 +548,7 @@ def get_graph(mol):
         edge_attr = np.empty((0, num_bond_features), dtype=np.int32)
     return x, edge_index, edge_attr
 
+
 def get_graph_features(edge_attr, edge_index, node_attr, drop_feat):
     # atom_feat_sizes = [128] + [16 for _ in range(8)]
     atom_feat_sizes = [16 for _ in range(8)]
@@ -528,6 +603,7 @@ def get_graph_features(edge_attr, edge_index, node_attr, drop_feat):
     feat["pair_type"] = convert_to_single_emb(pair_type, [128, 128])
     feat["attn_bias"] = torch.zeros((N + 1, N + 1), dtype=torch.float32)
     return feat
+
 
 def convert_to_single_emb(x, sizes):
     assert x.shape[-1] == len(sizes)
