@@ -1,0 +1,20 @@
+name: gdb9
+url: "https://drive.google.com/uc?id=1ys1rvwixeZBiCPg8Kj8D65iFl8zJDdTu"
+file_format:
+  structure: sdf
+  properties: csv
+available_targets:
+  - homo
+  - lumo
+  - gap
+  - dipole
+  - alpha
+default_targets:
+  - homo
+  - lumo
+  - gap
+recommended_parameters:
+  batch_size: 16
+  epochs: 10
+  model_size: "84m"
+  split: "group"
