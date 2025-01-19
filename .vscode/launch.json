@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Quick QM9",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "unimol_tools/script.py",
+      "console": "integratedTerminal",
+      "args": ["--dataset", "gdb9"]
+    }
+  ]
+}

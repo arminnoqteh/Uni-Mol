@@ -1,12 +1,17 @@
 import os
 import urllib.request
 import argparse
-from unimol_tools import MolTrain, MolPredict
 import pandas as pd
 from rdkit import Chem
 import gdown
 import yaml
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(SCRIPT_DIR))
+
+from unimol_tools import MolTrain, MolPredict
 
 
 def load_dataset_config(dataset_name):
