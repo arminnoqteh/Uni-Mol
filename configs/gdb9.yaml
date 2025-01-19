@@ -7,14 +7,12 @@ available_targets:
   - homo
   - lumo
   - gap
-  - dipole
-  - alpha
 default_targets:
   - homo
   - lumo
   - gap
 recommended_parameters:
-  batch_size: 16
+  batch_size: 64
   epochs: 10
   model_size: "84m"
-  split: "group"
+  split: "random"

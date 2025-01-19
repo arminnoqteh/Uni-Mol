@@ -5,7 +5,7 @@
       "name": "Quick QM9",
       "type": "debugpy",
       "request": "launch",
-      "program": "unimol_tools/script.py",
+      "program": "scripts/script.py",
       "console": "integratedTerminal",
       "args": ["--dataset", "gdb9"]
     }

@@ -11,7 +11,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from unimol_tools import MolTrain, MolPredict
+from unimol_tools.unimol_tools import MolTrain, MolPredict
 
 
 def load_dataset_config(dataset_name):
@@ -128,16 +128,10 @@ def main():
                 smiles.append(Chem.MolToSmiles(mol, isomericSmiles=True))
                 mol_coords.append(mol.GetConformer().GetPositions())
 
-    # Read properties
     df = pd.read_csv(properties_path)
 
-    # Prepare data dictionary
-    data_dict = {
-        "smiles": smiles,
-        "coordinates": mol_coords,
-        "atoms": atoms_list,
-    }
-    # Add targets to data dictionary
+    data_dict = {"smiles": smiles, "coordinates": mol_coords, "atoms": atoms_list}
+
     for target in targets:
         data_dict[target] = df[target]
 
