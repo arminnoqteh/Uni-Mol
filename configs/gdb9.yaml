@@ -13,6 +13,6 @@ default_targets:
   - gap
 recommended_parameters:
   batch_size: 64
-  epochs: 10
+  epochs: 1
   model_size: "84m"
-  split: "random"
+  split: "scaffold"
