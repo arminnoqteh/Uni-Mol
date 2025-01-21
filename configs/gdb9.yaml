@@ -15,4 +15,4 @@ recommended_parameters:
   batch_size: 64
   epochs: 1
   model_size: "84m"
-  split: "scaffold"
+  split: "random"
