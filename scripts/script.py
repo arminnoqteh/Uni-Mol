@@ -7,11 +7,13 @@ import gdown
 import yaml
 from pathlib import Path
 import sys
+import torch
 
-# SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# sys.path.append(os.path.dirname(SCRIPT_DIR))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from unimol_tools import MolTrain, MolPredict
+from unimol_tools_.unimol_tools import MolTrain, MolPredict
+from unimol_tools_.unimol_tools.data.split import scaffold_split
 
 
 def load_dataset_config(dataset_name):
@@ -130,9 +132,30 @@ def main():
 
     df = pd.read_csv(properties_path)
 
-    data_dict = {"smiles": smiles, "coordinates": mol_coords, "atoms": atoms_list}
+    # train_val_idx = torch.cat([train_idx, valid_idx])
+    # train_idx, valid_idx, test_idx = scaffold_split(smiles)
+
+    # train_data_dict = {
+    #     "smiles": [smiles[i] for i in train_val_idx],
+    #     "atoms": [atoms_list[i] for i in train_val_idx],
+    #     "coordinates": [mol_coords[i] for i in train_val_idx],
+    # }
+
+    data_dict = {
+        "smiles": smiles,
+        "atoms": atoms_list,
+        "coordinates": mol_coords,
+    }
+
+    # new_train_idx, new_valid_idx = [], []
+    # for i, idx in enumerate(train_val_idx):
+    #     if idx in train_idx:
+    #         new_train_idx.append(i)
+    #     else:
+    #         new_valid_idx.append(i)
 
     for target in targets:
+        # train_data_dict[target] = df.iloc[train_val_idx][target].values
         data_dict[target] = df[target]
 
     # Initialize and train model
@@ -147,10 +170,14 @@ def main():
         split=split,
         smiles_col="smiles",
         target_cols=targets,
+        kfold=1,
     )
 
     pred = clf.fit(data=data_dict)
-    return pred
+    adie = clf.model.evaluate()
+
+    # clf = MolPredict(load_model='../exp')
+    # res = clf.predict(data=data_dict)
 
 
 if __name__ == "__main__":
