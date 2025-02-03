@@ -12,8 +12,8 @@ import torch
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
-from unimol_tools_.unimol_tools import MolTrain, MolPredict
-from unimol_tools_.unimol_tools.data.split import scaffold_split
+from unimol_tools.unimol_tools import MolTrain, MolPredict
+from unimol_tools.unimol_tools.data.split import scaffold_split
 
 
 def load_dataset_config(dataset_name):

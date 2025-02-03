@@ -129,7 +129,7 @@ dmypy.json
 .pyre/
 
 notebooks
-data
+/data
 exp/
 
 .DS_Store
