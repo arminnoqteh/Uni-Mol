@@ -201,6 +201,9 @@ class MolTrain(object):
         self.cv_pred = y_pred
 
         # If test data was part of the split, save test predictions
+        # Fixed test metrics calculation in the MolTrain class
+
+        # Modify the section in fit() method where we handle test predictions:
         if "test_pred" in self.model.cv:
             self.test_pred = self.model.cv["test_pred"]
             if scalar is not None:
@@ -212,15 +215,46 @@ class MolTrain(object):
                 and len(self.model.cv["test_indices"]) > 0
             ):
                 test_indices = self.model.cv["test_indices"].astype(int)
-                test_true = np.array(self.data["target"])[test_indices]
-                if scalar is not None:
-                    test_true = scalar.inverse_transform(test_true)
+                # Make sure we're only using valid test indices (within bounds)
+                test_indices = test_indices[test_indices < len(self.data["target"])]
 
-                test_metrics = metrics.cal_metric(test_true, self.test_pred)
-                logger.info(f"Test metrics: {test_metrics}")
-                joblib.dump(
-                    test_metrics, os.path.join(self.save_path, "test_metrics.dat")
-                )
+                if len(test_indices) > 0:
+                    # Match the dimensions correctly
+                    test_true = np.array(self.data["target"])[test_indices]
+                    test_pred = self.test_pred[test_indices]
+
+                    if scalar is not None:
+                        test_true = scalar.inverse_transform(test_true)
+
+                    # Ensure shapes match for metric calculation
+                    if test_true.shape != test_pred.shape:
+                        logger.warning(
+                            f"Shape mismatch: test_true {test_true.shape} vs test_pred {test_pred.shape}"
+                        )
+                        # If dimensions don't match, resize to compatible dimensions
+                        if len(test_true.shape) < len(test_pred.shape):
+                            if self.config["task"] == "multiclass":
+                                # For multiclass, target is an index but prediction is a probability vector
+                                pass  # Keep as is for metrics.cal_metric to handle
+                            else:
+                                # Reshape test_true to match test_pred
+                                test_true = test_true.reshape(test_true.shape[0], -1)
+                        elif len(test_pred.shape) < len(test_true.shape):
+                            # Reshape test_pred to match test_true
+                            test_pred = test_pred.reshape(test_pred.shape[0], -1)
+
+                    try:
+                        test_metrics = metrics.cal_metric(test_true, test_pred)
+                        logger.info(f"Test metrics: {test_metrics}")
+                        joblib.dump(
+                            test_metrics,
+                            os.path.join(self.save_path, "test_metrics.dat"),
+                        )
+                    except Exception as e:
+                        logger.error(f"Error calculating test metrics: {e}")
+                        logger.error(
+                            f"test_true shape: {test_true.shape}, test_pred shape: {test_pred.shape}"
+                        )
 
         return
 
