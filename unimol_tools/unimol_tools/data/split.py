@@ -14,10 +14,12 @@ from sklearn.model_selection import (
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from ..utils import logger
 
+# Updated Splitter class in split.py
+
 
 class Splitter(object):
     """
-    The Splitter class is responsible for splitting a dataset into train and test sets
+    The Splitter class is responsible for splitting a dataset into train, validation, and test sets
     based on the specified method.
     """
 
@@ -25,8 +27,8 @@ class Splitter(object):
         """
         Initializes the Splitter with a specified split method and random seed.
 
-        :param split_method: (str) The method for splitting the dataset, in the format 'Nfold_method'.
-                             Defaults to '5fold_random'.
+        :param method: (str) The method for splitting the dataset. Defaults to 'random'.
+        :param kfold: (int) Number of folds for cross-validation. For three-way split use 1.
         :param seed: (int) Random seed for reproducibility in random splitting. Defaults to 42.
         """
         self.method = method
@@ -67,40 +69,104 @@ class Splitter(object):
 
     def split(self, smiles, target=None, group=None, scaffolds=None, **params):
         """
-        Splits the dataset into train and test sets based on the initialized method.
+        Splits the dataset into train, validation, and test sets based on the initialized method.
 
-        :param data: The dataset to be split.
+        :param smiles: The SMILES strings to be split.
         :param target: (optional) Target labels for stratified splitting. Defaults to None.
         :param group: (optional) Group labels for group-based splitting. Defaults to None.
+        :param scaffolds: (optional) Scaffold information for scaffold-based splitting. Defaults to None.
 
-        :return: An iterator yielding train and test set indices for each fold.
+        :return: A list of tuples, where each tuple contains train, validation, and test indices.
         :raises ValueError: If the splitter method does not support the provided parameters.
         """
         if self.n_splits == 1:
-            logger.warning(
-                "Only one fold is used for training, no splitting is performed."
-            )
+            logger.info("Using three-way split with scaffold method.")
             train_idx, valid_idx, test_idx = scaffold_split(smiles)
             return [(train_idx, valid_idx, test_idx)]
+
         if smiles is None and "atoms" in params:
             smiles = params["atoms"]
             logger.warning("Atoms are used as SMILES for splitting.")
+
         if self.method in ["random"]:
+            # Convert two-way splits to three-way by further splitting the train set
             self.skf = self.splitter.split(smiles)
+            split_folds = []
+            for train_idx, test_idx in self.skf:
+                # Further split train_idx into train and validation
+                train_size = int(
+                    len(train_idx) * 0.8
+                )  # 80% for training, 20% for validation
+                np.random.seed(self.seed)
+                np.random.shuffle(train_idx)
+                valid_idx = train_idx[train_size:]
+                train_idx = train_idx[:train_size]
+                split_folds.append((train_idx, valid_idx, test_idx))
+            self.split_folds = split_folds
         elif self.method in ["scaffold"]:
-            self.skf = self.splitter.split(smiles, target, scaffolds)
+            if self.n_splits > 1:
+                # For k-fold with scaffold, we adapt to create validation sets
+                self.skf = self.splitter.split(smiles, target, scaffolds)
+                split_folds = []
+                for train_idx, test_idx in self.skf:
+                    # Further split train_idx into train and validation
+                    train_size = int(
+                        len(train_idx) * 0.8
+                    )  # 80% for training, 20% for validation
+                    np.random.seed(self.seed)
+                    np.random.shuffle(train_idx)
+                    valid_idx = train_idx[train_size:]
+                    train_idx = train_idx[:train_size]
+                    split_folds.append((train_idx, valid_idx, test_idx))
+                self.split_folds = split_folds
+            else:
+                # Single three-way scaffold split
+                train_idx, valid_idx, test_idx = scaffold_split(smiles)
+                self.split_folds = [(train_idx, valid_idx, test_idx)]
         elif self.method in ["group"]:
             self.skf = self.splitter.split(smiles, target, group)
+            split_folds = []
+            for train_idx, test_idx in self.skf:
+                # Further split train_idx into train and validation
+                train_size = int(
+                    len(train_idx) * 0.8
+                )  # 80% for training, 20% for validation
+                np.random.seed(self.seed)
+                np.random.shuffle(train_idx)
+                valid_idx = train_idx[train_size:]
+                train_idx = train_idx[:train_size]
+                split_folds.append((train_idx, valid_idx, test_idx))
+            self.split_folds = split_folds
         elif self.method in ["stratified"]:
             self.skf = self.splitter.split(smiles, group)
+            split_folds = []
+            for train_idx, test_idx in self.skf:
+                # Further split train_idx into train and validation
+                train_size = int(
+                    len(train_idx) * 0.8
+                )  # 80% for training, 20% for validation
+                np.random.seed(self.seed)
+                np.random.shuffle(train_idx)
+                valid_idx = train_idx[train_size:]
+                train_idx = train_idx[:train_size]
+                split_folds.append((train_idx, valid_idx, test_idx))
+            self.split_folds = split_folds
         elif self.method in ["select"]:
             unique_groups = np.unique(group)
             if len(unique_groups) == self.n_splits:
                 split_folds = []
                 for unique_group in unique_groups:
-                    train_idx = np.where(group != unique_group)[0]
+                    train_valid_idx = np.where(group != unique_group)[0]
                     test_idx = np.where(group == unique_group)[0]
-                    split_folds.append((train_idx, test_idx))
+                    # Further split train_valid_idx into train and validation
+                    train_size = int(
+                        len(train_valid_idx) * 0.8
+                    )  # 80% for training, 20% for validation
+                    np.random.seed(self.seed)
+                    np.random.shuffle(train_valid_idx)
+                    valid_idx = train_valid_idx[train_size:]
+                    train_idx = train_valid_idx[:train_size]
+                    split_folds.append((train_idx, valid_idx, test_idx))
                 self.split_folds = split_folds
                 return self.split_folds
             else:
@@ -109,11 +175,17 @@ class Splitter(object):
                 )
                 exit(1)
         elif self.method in ["none"]:
-            self.split_folds = [(params.get("train_idx"), params.get("valid_idx"))]
+            train_idx = params.get("train_idx")
+            valid_idx = params.get("valid_idx")
+            test_idx = params.get("test_idx")
+            if test_idx is None:
+                # If only train and valid are provided, make a placeholder empty test set
+                test_idx = torch.tensor([], dtype=torch.long)
+            self.split_folds = [(train_idx, valid_idx, test_idx)]
         else:
             logger.error("Unknown splitter method: {}".format(self.method))
             exit(1)
-        self.split_folds = list(self.skf)
+
         return self.split_folds
 
 

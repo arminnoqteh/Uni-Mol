@@ -18,6 +18,8 @@ from .tasks import Trainer
 from .utils import YamlHandler
 from .utils import logger
 
+# Modified MolTrain class in train.py
+
 
 class MolTrain(object):
     """A :class:`MolTrain` class is responsible for interface of training process of molecular data."""
@@ -90,7 +92,7 @@ class MolTrain(object):
         :param split_group_col: str, default='scaffold', column name of group split.
         :param kfold: int, default=5, number of folds for k-fold cross validation.
 
-            - 1: no split. all data will be used for training.
+            - 1: use three-way split (train/validation/test).
         
         :param save_path: str, default='./exp', path to save training results.
         :param remove_hs: bool, default=False, whether to remove hydrogens from molecules.
@@ -146,6 +148,7 @@ class MolTrain(object):
         config.model_size = model_size
         self.train_idx = params.get("train_idx", None)
         self.valid_idx = params.get("valid_idx", None)
+        self.test_idx = params.get("test_idx", None)  # Added test_idx parameter
         self.save_path = save_path
         self.config = config
 
@@ -167,8 +170,16 @@ class MolTrain(object):
             clf = MolTrain()
             clf.fit(custom_data)
         """
+        params = {}
+        if self.train_idx is not None:
+            params["train_idx"] = self.train_idx
+        if self.valid_idx is not None:
+            params["valid_idx"] = self.valid_idx
+        if self.test_idx is not None:
+            params["test_idx"] = self.test_idx
+
         self.datahub = DataHub(
-            data=data, is_train=True, save_path=self.save_path, **self.config
+            data=data, is_train=True, save_path=self.save_path, **self.config, **params
         )
         self.data = self.datahub.data
         self.update_and_save_config()
@@ -188,6 +199,29 @@ class MolTrain(object):
             joblib.dump(threshold, os.path.join(self.save_path, "threshold.dat"))
 
         self.cv_pred = y_pred
+
+        # If test data was part of the split, save test predictions
+        if "test_pred" in self.model.cv:
+            self.test_pred = self.model.cv["test_pred"]
+            if scalar is not None:
+                self.test_pred = scalar.inverse_transform(self.test_pred)
+
+            # Save test metrics if available
+            if (
+                "test_indices" in self.model.cv
+                and len(self.model.cv["test_indices"]) > 0
+            ):
+                test_indices = self.model.cv["test_indices"].astype(int)
+                test_true = np.array(self.data["target"])[test_indices]
+                if scalar is not None:
+                    test_true = scalar.inverse_transform(test_true)
+
+                test_metrics = metrics.cal_metric(test_true, self.test_pred)
+                logger.info(f"Test metrics: {test_metrics}")
+                joblib.dump(
+                    test_metrics, os.path.join(self.save_path, "test_metrics.dat")
+                )
+
         return
 
     def update_and_save_config(self):
@@ -199,9 +233,14 @@ class MolTrain(object):
         if self.config["task"] == "multiclass":
             self.config["multiclass_cnt"] = self.data["multiclass_cnt"]
 
-        self.config["split_method"] = (
-            f"{self.config['kfold']}fold_{self.config['split']}"
-        )
+        # Update config to indicate if we're using three-way split
+        if self.config["kfold"] == 1:
+            self.config["split_method"] = f"three_way_{self.config['split']}"
+        else:
+            self.config["split_method"] = (
+                f"{self.config['kfold']}fold_{self.config['split']}"
+            )
+
         if self.save_path is not None:
             if not os.path.exists(self.save_path):
                 logger.info("Create output directory: {}".format(self.save_path))

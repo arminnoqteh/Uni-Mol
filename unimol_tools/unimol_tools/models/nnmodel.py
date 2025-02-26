@@ -144,93 +144,149 @@ class NNModel(object):
 
     def run(self):
         """
-        Executes the training process of the model. This involves data preparation,
-        model training, validation, and computing metrics for each fold in cross-validation.
+        Run the model training and evaluation process using the three-way split.
+
+        This modified version handles the train/validation/test splits.
         """
-        logger.info("start training Uni-Mol:{}".format(self.model_name))
-        X = np.asarray(self.features)
-        y = np.asarray(self.data["target"])
-        group = (
-            np.asarray(self.data["group"]) if self.data["group"] is not None else None
-        )
-        if self.task == "classification":
-            y_pred = np.zeros_like(y.reshape(y.shape[0], self.num_classes)).astype(
-                float
-            )
-        else:
-            y_pred = np.zeros((y.shape[0], self.model_params["output_dim"]))
-        for fold, (tr_idx, te_idx, _) in enumerate(self.data["split_nfolds"]):
-            X_train, y_train = X[tr_idx], y[tr_idx]
-            X_valid, y_valid = X[te_idx], y[te_idx]
-            traindataset = NNDataset(X_train, y_train)
-            validdataset = NNDataset(X_valid, y_valid)
-            if fold > 0:
-                # need to initalize model for next fold training
-                self.model = self._init_model(**self.model_params)
-            if self.model_params.get("load_model_dir", None) is not None:
-                load_model_path = os.path.join(
-                    self.model_params["load_model_dir"], f"model_{fold}.pth"
-                )
-                model_dict = torch.load(
-                    load_model_path, map_location=self.model_params["device"]
-                )["model_state_dict"]
-                if (
-                    model_dict["classification_head.out_proj.weight"].shape[0]
-                    != self.model.output_dim
-                ):
-                    current_model_dict = self.model.state_dict()
-                    model_dict = {
-                        k: v
-                        for k, v in model_dict.items()
-                        if k in current_model_dict
-                        and "classification_head.out_proj" not in k
-                    }
-                    current_model_dict.update(model_dict)
-                    logger.info(
-                        "The output_dim of the model is different from the loaded model, only load the common part of the model"
-                    )
-                    self.model.load_state_dict(model_dict, strict=False)
-                else:
-                    self.model.load_state_dict(model_dict)
+        split_nfolds = self.data["split_nfolds"]
 
-                logger.info("load model success from {}".format(load_model_path))
-            _y_pred = self.trainer.fit_predict(
-                self.model,
-                traindataset,
-                validdataset,
-                self.loss_func,
-                self.activation_fn,
-                self.save_path,
-                fold,
-                self.target_scaler,
-            )
-            y_pred[te_idx] = _y_pred
-
-            if "multiclass_cnt" in self.data:
-                label_cnt = self.data["multiclass_cnt"]
-            else:
-                label_cnt = None
-
+        cv_pred = []
+        cv_true = []
+        for fold, (train_idx, valid_idx, test_idx) in enumerate(split_nfolds):
             logger.info(
-                "fold {0}, result {1}".format(
-                    fold,
-                    self.metrics.cal_metric(
-                        self.data["target_scaler"].inverse_transform(y_valid),
-                        self.data["target_scaler"].inverse_transform(_y_pred),
-                        label_cnt=label_cnt,
-                    ),
-                )
+                f"Fold {fold}: Training with {len(train_idx)} samples, validating with {len(valid_idx)} samples, testing with {len(test_idx)} samples"
             )
 
-        self.cv["pred"] = y_pred
-        self.cv["metric"] = self.metrics.cal_metric(
-            self.data["target_scaler"].inverse_transform(y),
-            self.data["target_scaler"].inverse_transform(self.cv["pred"]),
+            train_dataset = self.get_dataset(train_idx)
+            valid_dataset = self.get_dataset(valid_idx)
+            test_dataset = self.get_dataset(test_idx) if len(test_idx) > 0 else None
+
+            # Initialize model for this fold
+            model = self._init_model(**self.model_params)
+
+            # Train and validate the model
+            y_preds = self.trainer.fit_predict(
+                model=model,
+                train_dataset=train_dataset,
+                valid_dataset=valid_dataset,
+                loss_func=self.loss_func,
+                activation_fn=self.activation_fn,
+                dump_dir=self.save_path,
+                fold=fold,
+                target_scaler=self.data["target_scaler"],
+                feature_name=None,
+            )
+
+            # Add validation predictions to cross-validation results
+            valid_indices = (
+                valid_idx.cpu().numpy()
+                if isinstance(valid_idx, torch.Tensor)
+                else valid_idx
+            )
+            cv_pred.append((valid_indices, y_preds))
+            cv_true.append(self.data["target"][valid_indices])
+
+            # If a test set exists, evaluate on it
+            if test_dataset is not None and len(test_idx) > 0:
+                test_indices = (
+                    test_idx.cpu().numpy()
+                    if isinstance(test_idx, torch.Tensor)
+                    else test_idx
+                )
+                test_preds, _, _ = self.trainer.predict(
+                    model=model,
+                    dataset=test_dataset,
+                    loss_func=self.loss_func,
+                    activation_fn=self.activation_fn,
+                    dump_dir=self.save_path,
+                    fold=fold,
+                    target_scaler=self.data["target_scaler"],
+                    epoch=0,
+                    load_model=True,
+                    feature_name=None,
+                )
+
+                # Store test predictions
+                if "test_pred" not in self.cv:
+                    self.cv["test_pred"] = np.zeros(
+                        (len(self.data["target"]), test_preds.shape[1])
+                    )
+                    self.cv["test_indices"] = np.array([])
+
+                self.cv["test_pred"][test_indices] = test_preds
+                self.cv["test_indices"] = np.append(
+                    self.cv["test_indices"], test_indices
+                )
+
+        # Process validation predictions
+        pred_raw = []
+        for indices, preds in cv_pred:
+            for idx, pred in zip(indices, preds):
+                pred_raw.append((idx, pred))
+
+        pred_raw.sort(key=lambda x: x[0])
+        indices, preds = zip(*pred_raw)
+
+        preds = np.vstack(preds)
+        indices = np.array(indices)
+
+        # Reorder predictions to match original data order
+        pred = np.zeros((len(self.data["target"]), preds.shape[1]))
+        pred[indices] = preds
+
+        self.cv["pred"] = pred
+        return self.cv
+
+    def evaluate(self, trainer, model_dir, test_data=None):
+        """
+        Evaluate the model on the test dataset.
+
+        :param trainer: The Trainer instance
+        :param model_dir: Directory containing saved model weights
+        :param test_data: Optional test data to evaluate on
+        :return: Test predictions
+        """
+        if test_data is not None:
+            # Using provided test data
+            test_dataset = self.get_test_dataset(test_data)
+        elif "test_indices" in self.cv and len(self.cv["test_indices"]) > 0:
+            # Using test indices from the split
+            test_indices = self.cv["test_indices"].astype(int)
+            test_dataset = self.get_dataset(test_indices)
+        else:
+            # If no specific test data, use all data
+            test_dataset = self.get_dataset(np.arange(len(self.data["target"])))
+
+        # Use the model from the first fold for evaluation
+        model = self.init_new_model()
+
+        # Load the model weights
+        model_path = os.path.join(model_dir, f"model_0.pth")
+        if os.path.exists(model_path):
+            model_dict = torch.load(model_path, map_location=trainer.device)[
+                "model_state_dict"
+            ]
+            model.load_state_dict(model_dict)
+            logger.info(f"Loaded model from {model_path}")
+        else:
+            logger.warning(f"Model file {model_path} not found, using untrained model")
+
+        # Predict on test dataset
+        test_preds, _, _ = trainer.predict(
+            model=model,
+            dataset=test_dataset,
+            loss_func=self.loss_func,
+            activation_fn=self.activation_fn,
+            dump_dir=model_dir,
+            fold=0,
+            target_scaler=self.data["target_scaler"],
+            epoch=0,
+            load_model=False,  # Already loaded above
+            feature_name=None,
         )
-        self.dump(self.cv["pred"], self.save_path, "cv.data")
-        self.dump(self.cv["metric"], self.save_path, "metric.result")
-        logger.info("Uni-Mol metrics score: \n{}".format(self.cv["metric"]))
-        logger.info("Uni-Mol & Metric result saved!")
+
+        self.cv["test_pred"] = test_preds
+        return test_preds
 
     def dump(self, data, dir, name):
         """
@@ -245,42 +301,6 @@ class NNModel(object):
             os.makedirs(dir)
         joblib.dump(data, path)
 
-    def evaluate(self, trainer=None, checkpoints_path=None):
-        """
-        Evaluates the model by making predictions on the test set and averaging the results.
-
-        :param trainer: An optional trainer instance to use for prediction.
-        :param checkpoints_path: (str) The path to the saved model checkpoints.
-        """
-        logger.info("start predict NNModel:{}".format(self.model_name))
-        te_idx = self.data["split_nfolds"][0][2]
-        testdataset = NNDataset(
-            self.features[te_idx], np.asarray(self.data["target"])[te_idx]
-        )
-        for fold in range(self.data["kfold"]):
-            model_path = os.path.join(checkpoints_path, f"model_{fold}.pth")
-            self.model.load_state_dict(
-                torch.load(model_path, map_location=self.trainer.device)[
-                    "model_state_dict"
-                ]
-            )
-            _y_pred, _, __ = trainer.predict(
-                self.model,
-                testdataset,
-                self.loss_func,
-                self.activation_fn,
-                self.save_path,
-                fold,
-                self.target_scaler,
-                epoch=1,
-                load_model=True,
-            )
-            if fold == 0:
-                y_pred = np.zeros_like(_y_pred)
-            y_pred += _y_pred
-        y_pred /= self.data["kfold"]
-        self.cv["test_pred"] = y_pred
-
     def count_parameters(self, model):
         """
         Counts the number of trainable parameters in the model.
@@ -290,6 +310,80 @@ class NNModel(object):
         :return: (int) The number of trainable parameters.
         """
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # Add these methods to the NNModel class in models.py
+
+    def get_dataset(self, indices):
+        """
+        Create a dataset from the given indices.
+
+        :param indices: Indices of samples to include in the dataset
+        :return: Dataset object for the specified indices
+        """
+        if isinstance(indices, torch.Tensor):
+            indices = indices.cpu().numpy()
+
+        # Get the relevant data for the indices
+        if "unimol_input" in self.data:
+            inputs = [self.data["unimol_input"][i] for i in indices]
+            targets = self.data["target"][indices]
+
+            from torch.utils.data import Dataset
+
+            # Create dataset
+            class MolDataset(Dataset):
+                def __init__(self, inputs, targets):
+                    self.inputs = inputs
+                    self.targets = targets
+
+                def __len__(self):
+                    return len(self.inputs)
+
+                def __getitem__(self, idx):
+                    return self.inputs[idx], self.targets[idx]
+
+            return MolDataset(inputs, targets)
+        else:
+            # Handle other dataset types if needed
+            raise ValueError(
+                "Unsupported data format. 'unimol_input' not found in data dictionary."
+            )
+
+    def get_test_dataset(self, test_data):
+        """
+        Create a dataset from external test data.
+
+        :param test_data: External test data
+        :return: Dataset object for the test data
+        """
+        if "unimol_input" in test_data:
+            inputs = test_data["unimol_input"]
+            if "target" in test_data:
+                targets = test_data["target"]
+            else:
+                # If no targets available, use dummy values
+                targets = np.zeros((len(inputs), self.output_dim))
+
+            from torch.utils.data import Dataset
+
+            # Create dataset
+            class MolDataset(Dataset):
+                def __init__(self, inputs, targets):
+                    self.inputs = inputs
+                    self.targets = targets
+
+                def __len__(self):
+                    return len(self.inputs)
+
+                def __getitem__(self, idx):
+                    return self.inputs[idx], self.targets[idx]
+
+            return MolDataset(inputs, targets)
+        else:
+            # Handle other dataset types if needed
+            raise ValueError(
+                "Unsupported test data format. 'unimol_input' not found in test data dictionary."
+            )
 
 
 def NNDataset(data, label=None):

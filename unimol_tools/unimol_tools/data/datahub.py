@@ -10,6 +10,8 @@ from .conformer import ConformerGen, UniMolV2Feature
 from .split import Splitter
 from ..utils import logger
 
+# Modified DataHub class in datahub.py
+
 
 class DataHub(object):
     """
@@ -110,27 +112,71 @@ class DataHub(object):
         self.data["unimol_input"] = no_h_list
 
     def _init_split(self, **params):
+        """
+        Initializes the data splitting mechanism based on configuration parameters.
 
+        This method determines how the data will be split for cross-validation or
+        train/validation/test sets based on the specified method and parameters.
+
+        :param params: Configuration parameters including split method and fold count.
+        :return: A list of tuples containing indices for each split.
+        """
         self.split_method = params.get("split_method", "5fold_random")
-        kfold, method = (
-            int(self.split_method.split("fold")[0]),
-            self.split_method.split("_")[-1],
-        )  # Nfold_xxxx
+
+        # Handle new three_way split format
+        if self.split_method.startswith("three_way_"):
+            kfold = 1
+            method = self.split_method.split("_")[-1]
+        else:
+            kfold, method = (
+                int(self.split_method.split("fold")[0]),
+                self.split_method.split("_")[-1],
+            )  # Nfold_xxxx
+
         self.kfold = params.get("kfold", kfold)
         self.method = params.get("split", method)
         self.split_seed = params.get("split_seed", 42)
         self.data["kfold"] = self.kfold
         self.data["smiles"] = self.data["raw_data"]["SMILES"].values
+
         if not self.is_train:
+            # For prediction, we don't need to split
             return
-        self.splitter = Splitter(self.method, self.kfold, seed=self.split_seed)
-        split_nfolds = self.splitter.split(**self.data)
-        # if self.kfold == 1:
-        # logger.info(f"Kfold is 1, all data is used for training.")
-        # else:
-        # logger.info(f"Split method: {self.method}, fold: {self.kfold}")
-        # nfolds = np.zeros(len(split_nfolds[0][0]) + len(split_nfolds[0][1]), dtype=int)
-        # for enu, (tr_idx, te_idx) in enumerate(split_nfolds):
-        #     nfolds[te_idx] = enu
+
+        # Use the existing train_idx, valid_idx, test_idx if provided in params
+        train_idx = params.get("train_idx", None)
+        valid_idx = params.get("valid_idx", None)
+        test_idx = params.get("test_idx", None)
+
+        if train_idx is not None and valid_idx is not None:
+            # Manual indices were provided
+            if test_idx is None:
+                # If no test set provided, create an empty one
+                test_idx = torch.tensor([], dtype=torch.long)
+                logger.info("No test indices provided, using an empty test set")
+
+            # Create a split fold with the provided indices
+            split_nfolds = [(train_idx, valid_idx, test_idx)]
+            logger.info(
+                f"Using provided indices: train={len(train_idx)}, valid={len(valid_idx)}, test={len(test_idx)}"
+            )
+        else:
+            # Use splitter to create folds
+            self.splitter = Splitter(self.method, self.kfold, seed=self.split_seed)
+            split_nfolds = self.splitter.split(**self.data)
+
+            # Log split information
+            if self.kfold == 1:
+                train_idx, valid_idx, test_idx = split_nfolds[0]
+                logger.info(
+                    f"Three-way split: train={len(train_idx)}, valid={len(valid_idx)}, test={len(test_idx)}"
+                )
+            else:
+                logger.info(f"Split method: {self.method}, fold: {self.kfold}")
+                fold_sizes = [
+                    (len(tr), len(va), len(te)) for tr, va, te in split_nfolds
+                ]
+                logger.info(f"Fold sizes (train, valid, test): {fold_sizes}")
+
         self.data["split_nfolds"] = split_nfolds
         return split_nfolds

@@ -147,13 +147,6 @@ def main():
         "coordinates": mol_coords,
     }
 
-    # new_train_idx, new_valid_idx = [], []
-    # for i, idx in enumerate(train_val_idx):
-    #     if idx in train_idx:
-    #         new_train_idx.append(i)
-    #     else:
-    #         new_valid_idx.append(i)
-
     for target in targets:
         # train_data_dict[target] = df.iloc[train_val_idx][target].values
         data_dict[target] = df[target]
@@ -173,8 +166,12 @@ def main():
         kfold=1,
     )
 
-    pred = clf.fit(data=data_dict)
-    adie = clf.model.evaluate()
+    res = clf.fit(data=data_dict)
+
+    predictor = MolPredict(load_model="../exp")
+    preds = predictor.predict()
+
+    return res, preds
 
     # clf = MolPredict(load_model='../exp')
     # res = clf.predict(data=data_dict)
