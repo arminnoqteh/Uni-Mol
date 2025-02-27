@@ -8,6 +8,9 @@
       "program": "scripts/script.py",
       "console": "integratedTerminal",
       "args": ["--dataset", "gdb9"],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
       "justMyCode": false
     }
   ]

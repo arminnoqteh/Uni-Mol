@@ -169,12 +169,9 @@ def main():
     res = clf.fit(data=data_dict)
 
     predictor = MolPredict(load_model="exp")
-    preds = predictor.predict()
+    preds = predictor.predict(data=data_dict, save_path="exp")
 
     return res, preds
-
-    # clf = MolPredict(load_model='../exp')
-    # res = clf.predict(data=data_dict)
 
 
 if __name__ == "__main__":

@@ -16,4 +16,3 @@ recommended_parameters:
   epochs: 1
   model_size: "84m"
   split: "scaffold"
-  device: "cuda"

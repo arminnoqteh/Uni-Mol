@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 import numpy as np
+import torch
 from .datareader import MolDataReader
 from .datascaler import TargetScaler
 from .conformer import ConformerGen, UniMolV2Feature
