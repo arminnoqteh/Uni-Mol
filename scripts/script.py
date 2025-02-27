@@ -168,7 +168,7 @@ def main():
 
     res = clf.fit(data=data_dict)
 
-    predictor = MolPredict(load_model="../exp")
+    predictor = MolPredict(load_model="exp")
     preds = predictor.predict()
 
     return res, preds

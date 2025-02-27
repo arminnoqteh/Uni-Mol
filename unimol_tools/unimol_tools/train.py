@@ -256,6 +256,10 @@ class MolTrain(object):
                             f"test_true shape: {test_true.shape}, test_pred shape: {test_pred.shape}"
                         )
 
+                self.save_test_results()
+
+        return
+
         return
 
     def update_and_save_config(self):
@@ -289,3 +293,99 @@ class MolTrain(object):
             out_path = os.path.join(self.save_path, "config.yaml")
             self.yamlhandler.write_yaml(data=self.config, out_file_path=out_path)
         return
+
+    def save_test_results(self, test_indices=None):
+        """
+        Save test results to a CSV file with SMILES, predicted values, and actual values.
+
+        :param test_indices: (optional) Indices of test samples. If None, use all test indices from the model.
+        """
+        if not hasattr(self, "test_pred") or self.test_pred is None:
+            logger.warning("No test predictions available. Cannot save test results.")
+            return
+
+        if test_indices is None and "test_indices" in self.model.cv:
+            test_indices = self.model.cv["test_indices"].astype(int)
+
+        if test_indices is None:
+            logger.warning(
+                "No test indices provided or found. Cannot save test results."
+            )
+            return
+
+        # Ensure test_indices are valid
+        test_indices = test_indices[test_indices < len(self.data["raw_data"])]
+
+        if len(test_indices) == 0:
+            logger.warning("No valid test indices found. Cannot save test results.")
+            return
+
+        # Get the SMILES strings
+        smiles_col = (
+            self.config.smiles_col if hasattr(self.config, "smiles_col") else "SMILES"
+        )
+        if smiles_col not in self.data["raw_data"].columns:
+            logger.warning(
+                f"SMILES column '{smiles_col}' not found in data. Using index instead."
+            )
+            smiles = [f"Compound_{i}" for i in test_indices]
+        else:
+            smiles = self.data["raw_data"][smiles_col].values[test_indices]
+
+        # Get the target column names
+        target_cols = self.data["target_cols"]
+
+        # Create a DataFrame with SMILES
+        import pandas as pd
+
+        results_df = pd.DataFrame({smiles_col: smiles})
+
+        # Add actual values if available
+        if self.data["target"] is not None:
+            true_values = self.data["target"][test_indices]
+
+            # Inverse transform if a scaler was used
+            scalar = self.data["target_scaler"]
+            if scalar is not None:
+                true_values = scalar.inverse_transform(true_values)
+
+            # Add each target column
+            if len(target_cols) == 1 and len(true_values.shape) == 1:
+                # Single target column
+                results_df[f"{target_cols[0]}_actual"] = true_values
+            elif len(target_cols) == 1 and true_values.shape[1] > 1:
+                # Multiclass classification
+                results_df[f"{target_cols[0]}_actual"] = true_values
+            else:
+                # Multiple target columns
+                for i, col in enumerate(target_cols):
+                    if i < true_values.shape[1]:
+                        results_df[f"{col}_actual"] = true_values[:, i]
+
+        # Add predicted values
+        test_preds = self.test_pred[test_indices]
+
+        if len(target_cols) == 1 and len(test_preds.shape) == 1:
+            # Single target column
+            results_df[f"{target_cols[0]}_pred"] = test_preds
+        elif len(target_cols) == 1 and test_preds.shape[1] > 1:
+            # For multiclass, add both the predicted class and probabilities
+            if self.config.task == "multiclass":
+                results_df[f"{target_cols[0]}_pred"] = np.argmax(test_preds, axis=1)
+                for i in range(test_preds.shape[1]):
+                    results_df[f"prob_class_{i}"] = test_preds[:, i]
+            else:
+                # Single target but multiple outputs (e.g., probability vector)
+                results_df[f"{target_cols[0]}_pred"] = test_preds[:, 0]
+                for i in range(1, test_preds.shape[1]):
+                    results_df[f"{target_cols[0]}_pred_{i}"] = test_preds[:, i]
+        else:
+            # Multiple target columns
+            for i, col in enumerate(target_cols):
+                if i < test_preds.shape[1]:
+                    results_df[f"{col}_pred"] = test_preds[:, i]
+
+        # Save to CSV
+        csv_path = os.path.join(self.save_path, "test_results.csv")
+        results_df.to_csv(csv_path, index=False)
+        logger.info(f"Test results saved to {csv_path}")

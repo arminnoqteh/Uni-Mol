@@ -106,6 +106,7 @@ class MolPredict(object):
                 data.split("/")[-1].split(".")[0] if isinstance(data, str) else "test"
             )
             self.save_predict(df, self.save_path, prefix)
+            self.save_test_results(df, y_pred, self.save_path)
             logger.info("pipeline finish!")
 
         return y_pred
@@ -129,3 +130,66 @@ class MolPredict(object):
         path = os.path.join(dir, name)
         data.to_csv(path)
         logger.info("save predict result to {}".format(path))
+
+    def save_test_results(self, df, y_pred, save_path):
+        """
+        Save test results to a CSV file with SMILES, predicted values, and actual values.
+
+        :param df: DataFrame containing the raw data with SMILES and targets
+        :param y_pred: Predicted values
+        :param save_path: Path to save the CSV file
+        """
+        if save_path is None:
+            logger.warning("No save path provided. Cannot save test results.")
+            return
+
+        # Create a copy of the dataframe to avoid modifying the original
+        results_df = df.copy()
+
+        # Get the SMILES column name
+        smiles_col = (
+            self.config.smiles_col if hasattr(self.config, "smiles_col") else "SMILES"
+        )
+
+        # If SMILES column is not in df, attempt to create a placeholder
+        if smiles_col not in results_df.columns:
+            logger.warning(
+                f"SMILES column '{smiles_col}' not found in data. Using index instead."
+            )
+            results_df[smiles_col] = [f"Compound_{i}" for i in range(len(results_df))]
+
+        # Create a streamlined version with only essential columns
+        essential_df = pd.DataFrame({smiles_col: results_df[smiles_col]})
+
+        # Add actual values if available
+        for col in self.target_cols:
+            if col in results_df.columns and not (results_df[col] == -1.0).all():
+                essential_df[f"{col}_actual"] = results_df[col]
+
+        # Add predicted values
+        predict_cols = ["predict_" + col for col in self.target_cols]
+        for i, col in enumerate(predict_cols):
+            if col in results_df.columns:
+                essential_df[f"{self.target_cols[i]}_pred"] = results_df[col]
+
+        # Add probability values for classification tasks
+        if self.task in ["classification", "multilabel_classification", "multiclass"]:
+            prob_cols = []
+            if self.task == "multiclass" and hasattr(self.config, "multiclass_cnt"):
+                prob_cols = [
+                    "prob_" + str(i) for i in range(self.config.multiclass_cnt)
+                ]
+            else:
+                prob_cols = ["prob_" + col for col in self.target_cols]
+
+            for i, col in enumerate(prob_cols):
+                if col in results_df.columns:
+                    if self.task == "multiclass":
+                        essential_df[f"prob_class_{i}"] = results_df[col]
+                    else:
+                        essential_df[f"{self.target_cols[i]}_prob"] = results_df[col]
+
+        # Save to CSV
+        csv_path = os.path.join(save_path, "test_results.csv")
+        essential_df.to_csv(csv_path, index=False)
+        logger.info(f"Test results saved to {csv_path}")
