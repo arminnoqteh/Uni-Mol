@@ -131,6 +131,8 @@ class MolPredict(object):
         data.to_csv(path)
         logger.info("save predict result to {}".format(path))
 
+    # Improved save_test_results method for MolPredict class
+
     def save_test_results(self, df, y_pred, save_path):
         """
         Save test results to a CSV file with SMILES, predicted values, and actual values.
@@ -151,15 +153,27 @@ class MolPredict(object):
             self.config.smiles_col if hasattr(self.config, "smiles_col") else "SMILES"
         )
 
-        # If SMILES column is not in df, attempt to create a placeholder
+        # Check if SMILES column exists in the DataFrame
         if smiles_col not in results_df.columns:
-            logger.warning(
-                f"SMILES column '{smiles_col}' not found in data. Using index instead."
-            )
-            results_df[smiles_col] = [f"Compound_{i}" for i in range(len(results_df))]
+            # Try to get SMILES from the datahub if available
+            if (
+                hasattr(self, "datahub")
+                and "smiles" in self.datahub.data
+                and self.datahub.data["smiles"] is not None
+            ):
+                smiles = self.datahub.data["smiles"]
+                results_df["SMILES"] = smiles
+                smiles_col = "SMILES"
+            else:
+                logger.warning(
+                    f"No SMILES data found. Cannot include SMILES in test results."
+                )
+                return
 
         # Create a streamlined version with only essential columns
-        essential_df = pd.DataFrame({smiles_col: results_df[smiles_col]})
+        import pandas as pd
+
+        essential_df = pd.DataFrame({"SMILES": results_df[smiles_col]})
 
         # Add actual values if available
         for col in self.target_cols:

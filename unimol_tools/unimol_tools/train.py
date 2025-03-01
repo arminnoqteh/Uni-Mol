@@ -294,6 +294,8 @@ class MolTrain(object):
             self.yamlhandler.write_yaml(data=self.config, out_file_path=out_path)
         return
 
+    # Improved save_test_results method for MolTrain class
+
     def save_test_results(self, test_indices=None):
         """
         Save test results to a CSV file with SMILES, predicted values, and actual values.
@@ -314,23 +316,30 @@ class MolTrain(object):
             return
 
         # Ensure test_indices are valid
-        test_indices = test_indices[test_indices < len(self.data["raw_data"])]
+        test_indices = test_indices[test_indices < len(self.data["target"])]
 
         if len(test_indices) == 0:
             logger.warning("No valid test indices found. Cannot save test results.")
             return
 
-        # Get the SMILES strings
-        smiles_col = (
-            self.config.smiles_col if hasattr(self.config, "smiles_col") else "SMILES"
-        )
-        if smiles_col not in self.data["raw_data"].columns:
-            logger.warning(
-                f"SMILES column '{smiles_col}' not found in data. Using index instead."
-            )
-            smiles = [f"Compound_{i}" for i in test_indices]
+        # Always use the original SMILES strings
+        if "smiles" in self.data and self.data["smiles"] is not None:
+            # Get SMILES from the data dictionary
+            smiles = [self.data["smiles"][i] for i in test_indices]
         else:
-            smiles = self.data["raw_data"][smiles_col].values[test_indices]
+            # Try to get SMILES from raw_data DataFrame
+            smiles_col = (
+                self.config.smiles_col
+                if hasattr(self.config, "smiles_col")
+                else "SMILES"
+            )
+            if smiles_col in self.data["raw_data"].columns:
+                smiles = self.data["raw_data"][smiles_col].values[test_indices]
+            else:
+                logger.warning(
+                    f"No SMILES data found. Cannot include SMILES in test results."
+                )
+                return
 
         # Get the target column names
         target_cols = self.data["target_cols"]
@@ -338,7 +347,7 @@ class MolTrain(object):
         # Create a DataFrame with SMILES
         import pandas as pd
 
-        results_df = pd.DataFrame({smiles_col: smiles})
+        results_df = pd.DataFrame({"SMILES": smiles})
 
         # Add actual values if available
         if self.data["target"] is not None:
