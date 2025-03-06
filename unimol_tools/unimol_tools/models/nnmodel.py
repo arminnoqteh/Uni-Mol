@@ -385,6 +385,19 @@ class NNModel(object):
                 "Unsupported test data format. 'unimol_input' not found in test data dictionary."
             )
 
+    def load_best_model(self, path):
+        """
+        Loads the best model weights from the specified path.
+        """
+        try:
+            model_dict = torch.load(path, map_location=self.trainer.device)[
+                "model_state_dict"
+            ]
+            self.model.load_state_dict(model_dict)
+            logger.info(f"Loaded model from {path}")
+        except Exception as e:
+            logger.warning(f"Model file {path} not found, using untrained model: {e}")
+
 
 def NNDataset(data, label=None):
     """

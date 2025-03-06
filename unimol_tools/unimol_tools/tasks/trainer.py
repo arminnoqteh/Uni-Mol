@@ -362,7 +362,9 @@ class Trainer(object):
             wait = 0
             info = {"model_state_dict": model.state_dict()}
             os.makedirs(dump_dir, exist_ok=True)
-            torch.save(info, os.path.join(dump_dir, f"model_{fold}.pth"))
+            torch.save(
+                info, os.path.join(dump_dir, "best_model.pth")
+            )  # Save best model
         elif loss >= min_loss:
             wait += 1
             if wait == self.patience:

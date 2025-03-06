@@ -106,7 +106,7 @@ class MolTrain(object):
         :param max_norm: float, default=5.0, max norm of gradient clipping.
         :param use_cuda: bool, default=True, whether to use GPU.
         :param use_amp: bool, default=True, whether to use automatic mixed precision.
-        :param freeze_layers: str or list, frozen layers by startwith name list. ['encoder', 'gbf'] will freeze all the layers whose name start with 'encoder' or 'gbf'.
+        :param freeze_layers: None, frozen layers by startwith name list. ['encoder', 'gbf'] will freeze all the layers whose name start with 'encoder' or 'gbf'.
         :param freeze_layers_reversed: bool, default=False, inverse selection of frozen layers
         :param params: dict, default=None, other parameters.
         :param load_model_dir: str, default=None, path to load model for transfer learning.
@@ -332,40 +332,28 @@ class MolTrain(object):
                 true_values = scalar.inverse_transform(true_values)
 
             # Add each target column
-            if len(target_cols) == 1 and len(true_values.shape) == 1:
-                # Single target column
-                results_df[f"{target_cols[0]}_actual"] = true_values
-            elif len(target_cols) == 1 and true_values.shape[1] > 1:
-                # Multiclass classification
-                results_df[f"{target_cols[0]}_actual"] = true_values
-            else:
-                # Multiple target columns
-                for i, col in enumerate(target_cols):
-                    if i < true_values.shape[1]:
-                        results_df[f"{col}_actual"] = true_values[:, i]
+            for i, col in enumerate(target_cols):
+                if i < true_values.shape[1]:
+                    results_df[f"{col}_actual"] = true_values[:, i]
 
         # Add predicted values
         test_preds = self.test_pred[test_indices]
 
-        if len(target_cols) == 1 and len(test_preds.shape) == 1:
-            # Single target column
-            results_df[f"{target_cols[0]}_pred"] = test_preds
-        elif len(target_cols) == 1 and test_preds.shape[1] > 1:
-            # For multiclass, add both the predicted class and probabilities
-            if self.config.task == "multiclass":
-                results_df[f"{target_cols[0]}_pred"] = np.argmax(test_preds, axis=1)
-                for i in range(test_preds.shape[1]):
-                    results_df[f"prob_class_{i}"] = test_preds[:, i]
-            else:
-                # Single target but multiple outputs (e.g., probability vector)
-                results_df[f"{target_cols[0]}_pred"] = test_preds[:, 0]
-                for i in range(1, test_preds.shape[1]):
-                    results_df[f"{target_cols[0]}_pred_{i}"] = test_preds[:, i]
-        else:
-            # Multiple target columns
+        # Handle different task types
+        if self.config.task == "multiclass":
+            # For multiclass, add the predicted class
+            results_df[f"{target_cols[0]}_pred"] = np.argmax(test_preds, axis=1)
+            # Optionally, add probabilities for each class
+            for i in range(test_preds.shape[1]):
+                results_df[f"{target_cols[0]}_prob_class_{i}"] = test_preds[:, i]
+        elif self.config.task in ["classification", "multilabel_classification"]:
+            # For binary/multilabel classification, add predicted probabilities
             for i, col in enumerate(target_cols):
-                if i < test_preds.shape[1]:
-                    results_df[f"{col}_pred"] = test_preds[:, i]
+                results_df[f"{col}_pred"] = test_preds[:, i]
+        else:
+            # For regression tasks, add predicted values for each target
+            for i, col in enumerate(target_cols):
+                results_df[f"{col}_pred"] = test_preds[:, i]
 
         # Save to CSV
         csv_path = os.path.join(self.save_path, "test_results.csv")
