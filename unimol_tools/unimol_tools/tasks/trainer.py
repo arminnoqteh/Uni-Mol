@@ -432,12 +432,12 @@ class Trainer(object):
             # Get model outputs
             with torch.no_grad():
                 outputs = model(**net_input)
-                if not load_model:
+                if load_model is False:
                     loss = loss_func(outputs, net_target)
                     val_loss.append(float(loss.data))
             y_preds.append(activation_fn(outputs).cpu().numpy())
             y_truths.append(net_target.detach().cpu().numpy())
-            if not load_model:
+            if load_model is False:
                 batch_bar.set_postfix(
                     Epoch="Epoch {}/{}".format(epoch + 1, self.max_epochs),
                     loss="{:.04f}".format(float(np.sum(val_loss) / (i + 1))),
