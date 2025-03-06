@@ -398,6 +398,25 @@ class NNModel(object):
         except Exception as e:
             logger.warning(f"Model file {path} not found, using untrained model: {e}")
 
+    def predict(self, indices):
+        """
+        Predicts the output for the given indices using the trainer's predict method.
+        """
+        test_dataset = self.get_dataset(indices)
+        test_preds, _, _ = self.trainer.predict(
+            model=self.model,
+            dataset=test_dataset,
+            loss_func=self.loss_func,
+            activation_fn=self.activation_fn,
+            dump_dir=self.save_path,
+            fold=0,
+            target_scaler=self.data["target_scaler"],
+            epoch=0,
+            load_model=False,
+            feature_name=None,
+        )
+        return test_preds
+
 
 def NNDataset(data, label=None):
     """
